@@ -1,10 +1,5 @@
-- name: Przygotuj Android
- uses: android-actions/setup-android@v3
-with:
- packages: 'platform-tools'
-- name: Zainstaluj SDK
-run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-                 
+name: Zbuduj APK
+
 on:
   workflow_dispatch:
   push:
@@ -26,19 +21,7 @@ jobs:
           java-version: "17"
 
       - name: Przygotuj Android
-        uses: android-actions/setup-android@v3
-
-      - name: Zainstaluj SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Przygotuj Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Utworz projekt
-        shell: python
-        run: |
+      
           from pathlib import Path
 
           files = {
