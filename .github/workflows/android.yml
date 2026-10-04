@@ -1,0 +1,444 @@
+name: Zbuduj APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Przygotuj Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Przygotuj Android
+        uses: android-actions/setup-android@v3
+
+      - name: Zainstaluj SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Przygotuj Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Utworz projekt
+        shell: python
+        run: |
+          from pathlib import Path
+
+          files = {
+          "settings.gradle": r'''
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Panstwo"
+          include(":app")
+          ''',
+
+          "build.gradle": r'''
+          plugins {
+              id "com.android.application" version "8.7.3" apply false
+          }
+          ''',
+
+          "gradle.properties": r'''
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          ''',
+
+          "app/build.gradle": r'''
+          plugins {
+              id "com.android.application"
+          }
+
+          android {
+              namespace "pl.panstwo.prototyp"
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId "pl.panstwo.prototyp"
+                  minSdk 26
+                  targetSdk 35
+                  versionCode 1
+                  versionName "0.0.1"
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          ''',
+
+          "app/src/main/AndroidManifest.xml": r'''
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="Państwo — prototyp"
+                  android:allowBackup="false"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          ''',
+
+          "app/src/main/java/pl/panstwo/prototyp/MainActivity.java": r'''
+          package pl.panstwo.prototyp;
+
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.View;
+          import android.widget.*;
+          import java.time.LocalDate;
+          import java.time.format.DateTimeFormatter;
+          import java.util.Locale;
+
+          public class MainActivity extends Activity {
+              final Handler handler = new Handler(Looper.getMainLooper());
+
+              final String[] countries = {
+                  "Polska", "Niemcy", "Francja", "Wielka Brytania",
+                  "Rosja", "USA", "Chiny", "Japonia", "Indie", "Brazylia"
+              };
+
+              SharedPreferences prefs;
+              TextView stats, taxLabel, message;
+              Button buildButton;
+              LinearLayout page;
+
+              long day = 0;
+              double cash = 100000;
+              double debt = 0;
+              int factories = 4;
+              int construction = 0;
+              int tax = 20;
+              int country = 0;
+              int speed = 0;
+
+              final Runnable clock = new Runnable() {
+                  @Override public void run() {
+                      for (int i = 0; i < speed; i++) {
+                          simulateDay();
+                      }
+                      render();
+                      handler.postDelayed(this, 1000);
+                  }
+              };
+
+              @Override public void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  prefs = getSharedPreferences("campaign", MODE_PRIVATE);
+                  load();
+                  createInterface();
+                  render();
+              }
+
+              @Override protected void onResume() {
+                  super.onResume();
+                  handler.removeCallbacks(clock);
+                  handler.postDelayed(clock, 1000);
+              }
+
+              @Override protected void onPause() {
+                  handler.removeCallbacks(clock);
+                  speed = 0;
+                  save();
+                  super.onPause();
+              }
+
+              int dp(int value) {
+                  return Math.round(value * getResources()
+                      .getDisplayMetrics().density);
+              }
+
+              TextView text(String value, int size) {
+                  TextView view = new TextView(this);
+                  view.setText(value);
+                  view.setTextSize(size);
+                  view.setTextColor(Color.rgb(225, 233, 242));
+                  view.setPadding(0, dp(8), 0, dp(8));
+                  page.addView(view);
+                  return view;
+              }
+
+              Button button(String title, View.OnClickListener action) {
+                  Button view = new Button(this);
+                  view.setText(title);
+                  view.setAllCaps(false);
+                  view.setMinHeight(dp(52));
+                  page.addView(view, new LinearLayout.LayoutParams(
+                      -1, -2));
+                  view.setOnClickListener(action);
+                  return view;
+              }
+
+              void createInterface() {
+                  ScrollView scroll = new ScrollView(this);
+                  scroll.setFillViewport(true);
+                  scroll.setBackgroundColor(Color.rgb(16, 24, 36));
+
+                  page = new LinearLayout(this);
+                  page.setOrientation(LinearLayout.VERTICAL);
+                  page.setPadding(dp(16), dp(16), dp(16), dp(24));
+                  scroll.addView(page);
+
+                  setContentView(scroll);
+
+                  scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+                      view.setPadding(
+                          insets.getSystemWindowInsetLeft(),
+                          insets.getSystemWindowInsetTop(),
+                          insets.getSystemWindowInsetRight(),
+                          insets.getSystemWindowInsetBottom());
+                      return insets;
+                  });
+                  scroll.requestApplyInsets();
+
+                  text("PAŃSTWO", 28);
+                  text("Test techniczny 0.0.1 • działa offline", 14);
+
+                  button("Nowa kampania / wybór państwa", v ->
+                      new AlertDialog.Builder(this)
+                          .setTitle("Nowa kampania — zastąpi obecny zapis")
+                          .setItems(countries, (dialog, which) -> {
+                              country = which;
+                              day = 0;
+                              cash = 100000;
+                              debt = 0;
+                              factories = 4;
+                              construction = 0;
+                              tax = 20;
+                              speed = 0;
+                              save();
+                              createInterface();
+                              render();
+                          })
+                          .setNegativeButton("Anuluj", null)
+                          .show()
+                  );
+
+                  stats = text("", 18);
+
+                  LinearLayout timeRow = new LinearLayout(this);
+                  page.addView(timeRow);
+                  String[] titles = {"Pauza", "1×", "4×", "12×"};
+                  int[] speeds = {0, 1, 4, 12};
+
+                  for (int i = 0; i < titles.length; i++) {
+                      final int selectedSpeed = speeds[i];
+                      Button b = new Button(this);
+                      b.setText(titles[i]);
+                      b.setAllCaps(false);
+                      b.setMinHeight(dp(52));
+                      timeRow.addView(b, new LinearLayout.LayoutParams(
+                          0, -2, 1));
+                      b.setOnClickListener(v -> {
+                          speed = selectedSpeed;
+                          render();
+                      });
+                  }
+
+                  taxLabel = text("", 18);
+
+                  SeekBar slider = new SeekBar(this);
+                  slider.setMax(35);
+                  slider.setProgress(tax - 5);
+                  slider.setMinimumHeight(dp(48));
+                  page.addView(slider);
+
+                  slider.setOnSeekBarChangeListener(
+                      new SeekBar.OnSeekBarChangeListener() {
+                          public void onProgressChanged(
+                              SeekBar bar, int progress, boolean fromUser) {
+                              tax = progress + 5;
+                              render();
+                          }
+                          public void onStartTrackingTouch(SeekBar bar) {
+                          }
+                          public void onStopTrackingTouch(SeekBar bar) {
+                              save();
+                          }
+                      }
+                  );
+
+                  buildButton = button("Rozpocznij budowę fabryki", v -> {
+                      if (construction == 0) {
+                          construction = 30;
+                          message.setText(
+                              "Budowa rozpoczęta. Koszt: 1 000 j.p. dziennie "
+                              + "przez 30 dni. Produkcja od dnia po ukończeniu.");
+                          save();
+                          render();
+                      }
+                  });
+
+                  button("Zapisz kampanię", v -> {
+                      save();
+                      message.setText("Zapisano na tym telefonie.");
+                  });
+
+                  message = text("Gotowe. Wybierz tempo upływu czasu.", 15);
+
+                  text(
+                      "ZASADY TESTU\n"
+                      + "Wszystkie państwa mają identyczne dane testowe. "
+                      + "j.p. oznacza umowne jednostki pieniężne.\n\n"
+                      + "Fabryka: 2 000 j.p. wartości dodanej dziennie. "
+                      + "Dochody budżetu = wartość dodana × podatek.\n\n"
+                      + "Wydatki stałe: 1 500 j.p./dzień. "
+                      + "Odsetki: 5% rocznie, naliczane dziennie. "
+                      + "Brak gotówki pokrywa automatyczny dług.\n\n"
+                      + "To wyłącznie sprawdzenie czasu, budżetu, "
+                      + "inwestycji i zapisu. Brak jeszcze rynku, "
+                      + "pracowników, materiałów, polityki i mapy. "
+                      + "Podatek nie ma jeszcze skutków społecznych.\n\n"
+                      + "Gra zatrzymuje się po wyjściu z aplikacji. "
+                      + "Zapis automatyczny co 30 dni i przy wyjściu.",
+                      14
+                  );
+              }
+
+              double revenue() {
+                  return factories * 2000.0 * tax / 100.0;
+              }
+
+              double expenses() {
+                  return 1500.0 + debt * 0.05 / 365.0
+                      + (construction > 0 ? 1000.0 : 0.0);
+              }
+
+              void simulateDay() {
+                  cash += revenue() - expenses();
+
+                  if (cash < 0) {
+                      debt += -cash;
+                      cash = 0;
+                  }
+
+                  day++;
+
+                  if (construction > 0) {
+                      construction--;
+                      if (construction == 0) {
+                          factories++;
+                          message.setText(
+                              "Dzień " + day + ": ukończono fabrykę.");
+                      }
+                  }
+
+                  if (day % 30 == 0) {
+                      save();
+                  }
+              }
+
+              String money(double value) {
+                  return String.format(
+                      Locale.forLanguageTag("pl-PL"), "%,.0f", value);
+              }
+
+              void render() {
+                  if (stats == null) return;
+
+                  String date = LocalDate.of(2000, 1, 1)
+                      .plusDays(day)
+                      .format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+
+                  stats.setText(
+                      countries[country] + " • " + date
+                      + "\nTempo: "
+                      + (speed == 0 ? "pauza" : speed + " dni/s")
+                      + "\n\nGotówka: " + money(cash) + " j.p."
+                      + "\nDług: " + money(debt) + " j.p."
+                      + "\nDochody/dzień: " + money(revenue())
+                      + "\nWydatki/dzień: " + money(expenses())
+                      + "\nSaldo/dzień: " + money(revenue() - expenses())
+                      + "\n\nFabryki: " + factories
+                      + "\nWartość dodana/dzień: "
+                      + money(factories * 2000.0)
+                      + "\nBudowa: "
+                      + (construction > 0
+                          ? construction + " dni do końca"
+                          : "brak")
+                  );
+
+                  if (taxLabel != null) {
+                      taxLabel.setText("Uproszczony podatek: " + tax + "%");
+                  }
+                  if (buildButton != null) {
+                      buildButton.setEnabled(construction == 0);
+                  }
+              }
+
+              void save() {
+                  prefs.edit()
+                      .putLong("day", day)
+                      .putLong("cash", Double.doubleToLongBits(cash))
+                      .putLong("debt", Double.doubleToLongBits(debt))
+                      .putInt("factories", factories)
+                      .putInt("construction", construction)
+                      .putInt("tax", tax)
+                      .putInt("country", country)
+                      .apply();
+              }
+
+              void load() {
+                  day = prefs.getLong("day", 0);
+                  cash = Double.longBitsToDouble(prefs.getLong(
+                      "cash", Double.doubleToLongBits(100000.0)));
+                  debt = Double.longBitsToDouble(prefs.getLong(
+                      "debt", Double.doubleToLongBits(0.0)));
+                  factories = prefs.getInt("factories", 4);
+                  construction = prefs.getInt("construction", 0);
+                  tax = prefs.getInt("tax", 20);
+                  country = prefs.getInt("country", 0);
+              }
+          }
+          '''
+          }
+
+          for name, content in files.items():
+              path = Path(name)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(content.strip() + "\n", encoding="utf-8")
+
+      - name: Zbuduj instalator
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Udostepnij APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Panstwo-Android-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
