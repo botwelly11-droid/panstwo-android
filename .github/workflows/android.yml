@@ -1,8 +1,10 @@
-    - name: Przygotuj Android
-     uses: android-actions/setup-android@v3
-     with:
-       packages: 'platform-tools'
-          
+- name: Przygotuj Android
+ uses: android-actions/setup-android@v3
+with:
+ packages: 'platform-tools'
+- name: Zainstaluj SDK
+run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+                 
 on:
   workflow_dispatch:
   push:
